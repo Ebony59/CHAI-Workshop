@@ -9,6 +9,7 @@ from transformers import pipeline
 from trl import SFTTrainer, DataCollatorForCompletionOnlyLM
 import numpy as np
 import torch
+import wandb
 
 
 """
@@ -79,12 +80,16 @@ def get_lora_base_model(model, lora_config):
 
 
 if __name__ == '__main__':
-    BASE_MODEL = "mistralai/Mistral-Nemo-Instruct-2407"
-    MODEL_NAME = "WorkshopSFT"
+    BASE_MODEL = "mistralai/Mistral-Small-Instruct-2409"
+    MODEL_NAME = "EZStorytellingSFT-sample1"
+
+    wandb.init(project=MODEL_NAME)
 
     # Load dataset
-    train_dataset = load_data(f'ChaiML/horror_data_formatted')
+    train_dataset = load_data(f'ChaiML/draft_storytelling_sample1')
     train_dataset = train_dataset.select_columns(['text'])
+
+    print('length of dataset:', len(train_dataset))
 
     # Load tokenizer and base model
     tokenizer = get_tokenizer(BASE_MODEL)
@@ -119,7 +124,7 @@ if __name__ == '__main__':
         lr_scheduler_type="constant_with_warmup",
         warmup_ratio=0.1,
         seed=42,
-        logging_steps=10,
+        logging_steps=5,
         save_steps=1,
         eval_steps=50,
         save_strategy="epoch",
@@ -127,6 +132,7 @@ if __name__ == '__main__':
         hub_model_id="dpo",
         gradient_checkpointing=True,
         bf16=True,
+        report_to=['wandb'],
     )
 
     trainer = SFTTrainer(

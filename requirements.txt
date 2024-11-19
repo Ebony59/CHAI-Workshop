@@ -1,6 +1,5 @@
 bitsandbytes
 datasets
-flash-attn --no-build-isolation
 ipython
 peft
 pydantic

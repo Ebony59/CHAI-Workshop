@@ -4,6 +4,8 @@ import numpy as np
 import random
 import torch
 import wandb
+import warnings
+
 from datasets import load_dataset
 from peft import LoraConfig, get_peft_model
 from tqdm import tqdm
@@ -26,28 +28,18 @@ layer = random.choice(range(55))
 
 def evaluate_with_reward_model(model, tokenizer, reward_model, reward_tokenizer):   
     for name, param in model.named_parameters():
-        if 'lora' in name:
-            print(f"{name}: requires_grad={param.requires_grad}")
-        
-    for name, param in model.named_parameters():
         if ('norm' in name) or name=='lm_head.weight' or str(layer) in name:
-            # print(f"{name}: Mean={param.data.mean().item()}, Std={param.data.std().item()}")
-            with open('./lora_model_weights.txt','a') as f:
-                f.write(f"{name}: Mean={param.data.mean().item()}, Std={param.data.std().item()}\n")
-    # this step is not neccessary, this was only used for final uploading
-    merged_model = model.merge_and_unload() # comment this out
-    merged_model.eval()
+            if param.requires_grad:
+                # print(f"{name}: Mean={param.data.mean().item()}, Std={param.data.std().item()}")
+                with open('./lora_model_weights.txt','a') as f:
+                    f.write(f"{name}: Mean={param.data.mean().item()}, Std={param.data.std().item()}\n")
 
-    for name, param in merged_model.named_parameters():
-        if name == 'model.norm.weight' or str(layer) in name:
-            # print(f"{name}: Mean={param.data.mean().item()}, Std={param.data.std().item()}")
-            with open('./merged_model_weights.txt','a') as f:
-                f.write(f"{name}: Mean={param.data.mean().item()}, Std={param.data.std().item()}\n")
+    model.eval()
 
     # you cannot evaluate on a single example, has to be at least 100 examples minimum and take average
     # Examples need to be obtained from live conversations (TL will provide a dataset)
     prompt = """Lorenzo Valleri (billionaire age gap arranged marriage)'s Persona: Lorenzo Valleri, a billionaire with a suave composure, stands as the epitome of power and success. His arranged marriage to a younger woman is a union that seems impervious to outside influence, for he is fiercely protective and possessive of his new spouse.\nLorenzo Valleri (billionaire age gap arranged marriage): *As you enter the opulent ballroom, Lorenzo's eyes immediately latch onto you, a mixture of possessiveness and jealousy dancing in their depths*\nYou: *Catching his gaze, I falter for a moment before regaining composure* Mr. Valleri, good evening. I didn't expect to see you here tonight. You're looking particularly... elegant. *\nLorenzo Valleri (billionaire age gap arranged marriage): *His tone is laced with a subtle hint of menace* Ah, yes. I'm making an appearance at this... social event. And I must say, you look particularly... ravishing tonight. *His eyes linger on yours before he turns to whisper something in the ear of a nearby servant*\nYou: *Returning his gaze with a subtle smile, I raise an eyebrow* You're quite the host, Mr. Valleri. Your wife seems to be having a lovely time. Does she... always attend these events?\nLorenzo Valleri (billionaire age gap arranged marriage):"""
-    text_generator = pipeline("text-generation", model=merged_model.half(), tokenizer=tokenizer)
+    text_generator = pipeline("text-generation", model=model.half(), tokenizer=tokenizer)
     generated_text = text_generator(
         prompt + '\n####\n',
         max_new_tokens=200,
@@ -76,12 +68,10 @@ class RewardLoggingCallback(TrainerCallback):
         self.eval_steps = eval_steps
 
     def on_step_end(self, args, state: TrainerState, control: TrainerControl, **kwargs):
-        print(f"Global step: {state.global_step}, Training step: {state.total_flos}")
         if state.global_step % self.eval_steps == 0 and state.global_step > 0:
             with open('./lora_model_weights.txt','a') as f:
                 f.write(f'step {state.global_step}\n')
-            with open('./merged_model_weights.txt','a') as f:
-                f.write(f'step {state.global_step}\n')
+
             # Evaluate the model with the reward model
             reward_score = evaluate_with_reward_model(
                 kwargs['model'], self.tokenizer, self.reward_model, self.reward_tokenizer,
@@ -92,19 +82,22 @@ class RewardLoggingCallback(TrainerCallback):
 
 if __name__=='__main__':
     BASE_MODEL = "mistralai/Mistral-Small-Instruct-2409"
-    MODEL_NAME = "EZStorytellingEditsSFT_Qi6"
+    MODEL_NAME = "EZStorytellingEditsSFT_Qi6_nomem"
+
+    warnings.filterwarnings(
+        "ignore",
+        message="The model 'PeftModelForCausalLM' is not supported for text-generation.",
+        category=UserWarning,
+    )
 
     with open('./lora_model_weights.txt','w') as f:
         f.write(f'layer: {layer}\n')
 
-    with open('./merged_model_weights.txt','w') as f:
-        f.write(f'layer: {layer}\n')
-    
     # Initialize W&B
     wandb.init(project=MODEL_NAME)
     
     # Load dataset
-    train_dataset = load_dataset('ChaiML/EZ_Qi6_edit_storytelling_60convos', split='train')
+    train_dataset = load_dataset('ChaiML/EZ_Qi6_edit_storytelling_empty', split='train')
     train_dataset = train_dataset.select_columns(['text'])
     print('Length of dataset:', len(train_dataset))
     
@@ -145,8 +138,8 @@ if __name__=='__main__':
     training_args = TrainingArguments(
         num_train_epochs=4,
         learning_rate=1e-05,
-        per_device_train_batch_size=16,
-        gradient_accumulation_steps=1,
+        per_device_train_batch_size=1,
+        gradient_accumulation_steps=16,
         do_eval=True,
         per_device_eval_batch_size=1,
         adam_epsilon=1e-08,
@@ -199,8 +192,8 @@ if __name__=='__main__':
     
     # Push to Hub
     trained_model = model.merge_and_unload()
-    # tokenizer.push_to_hub(f'ChaiML/{MODEL_NAME}', private=True)
-    # trained_model.push_to_hub(f'ChaiML/{MODEL_NAME}', private=True)
+    tokenizer.push_to_hub(f'ChaiML/{MODEL_NAME}', private=True)
+    trained_model.push_to_hub(f'ChaiML/{MODEL_NAME}', private=True)
     
     # Trained model verification
     text_generator = pipeline("text-generation", model=trained_model.half(), tokenizer=tokenizer)
@@ -216,5 +209,5 @@ if __name__=='__main__':
     print(f'Generated response: {generated_text}')
     
     # Submit the model
-    # submitter = ModelSubmitter(verbose=True)
-    # submitter.submit(submission_parameters)
+    submitter = ModelSubmitter(verbose=True)
+    submitter.submit(submission_parameters)

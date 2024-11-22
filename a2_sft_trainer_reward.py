@@ -30,7 +30,7 @@ global choisen_i
 chosen_i = random.choice(range(100))
 
 
-def evaluate_with_reward_model(model, tokenizer, reward_model, eval_dataset): 
+def evaluate_with_reward_model(model, tokenizer, reward_model, reward_tokenizer, eval_dataset): 
     for name, param in model.named_parameters():
         if ('norm' in name) or name=='lm_head.weight' or str(layer) in name:
             if param.requires_grad:

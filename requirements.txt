@@ -7,3 +7,4 @@ transformers[torch]
 trl==0.8.6
 typing_extensions==4.7.1
 wandb
+chaiverse

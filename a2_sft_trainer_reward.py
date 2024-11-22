@@ -21,6 +21,7 @@ from transformers import (
 )
 from trl import SFTTrainer, DataCollatorForCompletionOnlyLM
 from chaiverse.submit import ModelSubmitter
+from chaiverse.formatters import PygmalionFormatter
 
 global layer
 layer = random.choice(range(55))
@@ -207,6 +208,28 @@ if __name__=='__main__':
     generated_text = generated_text[0]['generated_text'].split('\n####\n')[1]
     print(f'Expected response: {expected_response}')
     print(f'Generated response: {generated_text}')
+
+    formatter = PygmalionFormatter()
+    formatter.memory_template = ''
+    formatter.prompt_template = ''
+
+    generation_params={
+        'frequency_penalty': 0.5,
+        'max_input_tokens': 1024,
+        'presence_penalty': 0.5,
+        'stopping_words': ['\n'],
+        'temperature': 0.9,
+        'top_k': 80,
+        'top_p': 0.95,
+        'min_p': 0.05,
+        'best_of': 4,
+    }
+
+    submission_parameters = {
+        "model_repo": f"ChaiML/{MODEL_NAME}",
+        "generation_params": generation_params,
+        "formatter": formatter,
+    }
     
     # Submit the model
     submitter = ModelSubmitter(verbose=True)

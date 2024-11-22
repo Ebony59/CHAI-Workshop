@@ -45,7 +45,7 @@ def evaluate_with_reward_model(model, tokenizer, reward_model, reward_tokenizer,
         prompt = eval_dataset[i]['payload']
         text_generator = pipeline("text-generation", model=model.half(), tokenizer=tokenizer)
         generated_text = text_generator(
-            prompt + '\n####\n',
+            prompt + '####\n',
             max_new_tokens=200,
             num_return_sequences=1,
             eos_token_id=tokenizer.eos_token_id
@@ -73,7 +73,7 @@ class RewardLoggingCallback(TrainerCallback):
         self.reward_model = reward_model
         self.tokenizer = tokenizer
         self.reward_tokenizer = reward_tokenizer
-        self.dataset = dataset,
+        self.dataset = dataset
         self.eval_steps = eval_steps
 
     def on_step_end(self, args, state: TrainerState, control: TrainerControl, **kwargs):
@@ -118,7 +118,7 @@ if __name__=='__main__':
     eval_dataset = eval_dataset.select_columns(['payload'])
 
 
-    print(f'payload for {chosen_i}th dataset')
+    print(f'payload for {chosen_i}th reward dataset')
     print(eval_dataset[chosen_i]['payload'])
     
     

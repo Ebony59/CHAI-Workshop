@@ -11,6 +11,7 @@ import numpy as np
 import torch
 import wandb
 
+from chaiverse.submit import ModelSubmitter
 
 """
 Goal
@@ -22,6 +23,18 @@ Agenda
 - Key hyper parameters, how do I calculate my batch size?
 - How do I know my model was trained correctly?
 """
+
+generation_params={
+    'frequency_penalty': 0.5,
+    'max_input_tokens': 1024,
+    'presence_penalty': 0.5,
+    'stopping_words': ['\n'],
+    'temperature': 0.9,
+    'top_k': 80,
+    'top_p': 0.95,
+    'min_p': 0.05,
+    'best_of': 4,
+    }
 
 
 def load_data(dataset_name):
@@ -81,14 +94,19 @@ def get_lora_base_model(model, lora_config):
 
 if __name__ == '__main__':
     BASE_MODEL = "mistralai/Mistral-Small-Instruct-2409"
-    MODEL_NAME = "EZStorytellingSFT-sample1"
+    MODEL_NAME = "EZStorytellingEditsSFT_Qi6_ume"
+
+    submission_parameters = {
+        "model_repo": f"ChaiML/{MODEL_NAME}",
+        "generation_params": generation_params,
+    }
 
     wandb.init(project=MODEL_NAME)
 
     # Load dataset
-    train_dataset = load_data(f'ChaiML/draft_storytelling_sample1')
+    train_dataset = load_data(f'ChaiML/EZ_Qi6_ume_edit_storytelling')
     train_dataset = train_dataset.select_columns(['text'])
-
+ 
     print('length of dataset:', len(train_dataset))
 
     # Load tokenizer and base model
@@ -114,7 +132,7 @@ if __name__ == '__main__':
 
     # Train model
     training_args = TrainingArguments(
-        num_train_epochs=4,
+        num_train_epochs=2,
         learning_rate=1e-05,
         per_device_train_batch_size=1,
         gradient_accumulation_steps=16,
@@ -164,3 +182,11 @@ if __name__ == '__main__':
     generated_text = generated_text[0]['generated_text'].split('\n####\n')[1]
     print(f'Expected response: {expected_response}')
     print(f'Generated response: {generated_text}')
+
+    submitter = ModelSubmitter(verbose=True)
+    submitter.submit(submission_parameters)
+    
+
+
+    
+    

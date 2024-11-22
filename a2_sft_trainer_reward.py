@@ -26,8 +26,11 @@ from chaiverse.formatters import PygmalionFormatter
 global layer
 layer = random.choice(range(55))
 
+global choisen_i
+chosen_i = random.choice(range(100))
 
-def evaluate_with_reward_model(model, tokenizer, reward_model, reward_tokenizer):   
+
+def evaluate_with_reward_model(model, tokenizer, reward_model, eval_dataset): 
     for name, param in model.named_parameters():
         if ('norm' in name) or name=='lm_head.weight' or str(layer) in name:
             if param.requires_grad:
@@ -36,29 +39,33 @@ def evaluate_with_reward_model(model, tokenizer, reward_model, reward_tokenizer)
                     f.write(f"{name}: Mean={param.data.mean().item()}, Std={param.data.std().item()}\n")
 
     model.eval()
-
-    # you cannot evaluate on a single example, has to be at least 100 examples minimum and take average
-    # Examples need to be obtained from live conversations (TL will provide a dataset)
-    prompt = """Lorenzo Valleri (billionaire age gap arranged marriage)'s Persona: Lorenzo Valleri, a billionaire with a suave composure, stands as the epitome of power and success. His arranged marriage to a younger woman is a union that seems impervious to outside influence, for he is fiercely protective and possessive of his new spouse.\nLorenzo Valleri (billionaire age gap arranged marriage): *As you enter the opulent ballroom, Lorenzo's eyes immediately latch onto you, a mixture of possessiveness and jealousy dancing in their depths*\nYou: *Catching his gaze, I falter for a moment before regaining composure* Mr. Valleri, good evening. I didn't expect to see you here tonight. You're looking particularly... elegant. *\nLorenzo Valleri (billionaire age gap arranged marriage): *His tone is laced with a subtle hint of menace* Ah, yes. I'm making an appearance at this... social event. And I must say, you look particularly... ravishing tonight. *His eyes linger on yours before he turns to whisper something in the ear of a nearby servant*\nYou: *Returning his gaze with a subtle smile, I raise an eyebrow* You're quite the host, Mr. Valleri. Your wife seems to be having a lovely time. Does she... always attend these events?\nLorenzo Valleri (billionaire age gap arranged marriage):"""
-    text_generator = pipeline("text-generation", model=model.half(), tokenizer=tokenizer)
-    generated_text = text_generator(
-        prompt + '\n####\n',
-        max_new_tokens=200,
-        num_return_sequences=1,
-        eos_token_id=tokenizer.eos_token_id
-    )
-    generated_text = generated_text[0]['generated_text'].split('\n####\n')[1]
-    generated_text = generated_text.split('\n')[0]
-    print('reward response:', generated_text)
     
-    reward_input = f"{prompt}\n####\n{generated_text}"
-    inputs = reward_tokenizer(reward_input, return_tensors="pt", padding=True, truncation=True).to("cuda")
+    reward_scores = []
+    for i in range(len(eval_dataset)):
+        prompt = eval_dataset[i]['payload']
+        text_generator = pipeline("text-generation", model=model.half(), tokenizer=tokenizer)
+        generated_text = text_generator(
+            prompt + '\n####\n',
+            max_new_tokens=200,
+            num_return_sequences=1,
+            eos_token_id=tokenizer.eos_token_id
+        )
+        generated_text = generated_text[0]['generated_text'].split('\n####\n')[1]
+        generated_text = generated_text.split('\n')[0]
 
-    with torch.no_grad():
-        outputs = reward_model(**inputs)
-        reward_score = outputs.logits[:, 1].item()
+        if i == chosen_i:
+            print('reward response:', generated_text)
+        
+        reward_input = f"{prompt}\n####\n{generated_text}"
+        inputs = reward_tokenizer(reward_input, return_tensors="pt", padding=True, truncation=True).to("cuda")
+    
+        with torch.no_grad():
+            outputs = reward_model(**inputs)
+            reward_score = outputs.logits[:, 1].item()
 
-    return reward_score
+        reward_scores.append(reward_score)
+    return reward_scores
+        
 
 # Define the custom callback
 class RewardLoggingCallback(TrainerCallback):
@@ -66,6 +73,7 @@ class RewardLoggingCallback(TrainerCallback):
         self.reward_model = reward_model
         self.tokenizer = tokenizer
         self.reward_tokenizer = reward_tokenizer
+        self.dataset = dataset,
         self.eval_steps = eval_steps
 
     def on_step_end(self, args, state: TrainerState, control: TrainerControl, **kwargs):
@@ -74,12 +82,15 @@ class RewardLoggingCallback(TrainerCallback):
                 f.write(f'step {state.global_step}\n')
 
             # Evaluate the model with the reward model
-            reward_score = evaluate_with_reward_model(
-                kwargs['model'], self.tokenizer, self.reward_model, self.reward_tokenizer,
+            reward_scores = evaluate_with_reward_model(
+                kwargs['model'], self.tokenizer, self.reward_model, self.reward_tokenizer, self.dataset,
             )
+            reward_score = np.mean(reward_scores)
+            reward_score_std = np.std(reward_scores)
             # Log the average reward to W&B
-            wandb.log({"reward": reward_score, "step": state.global_step})
-            print(f"Step {state.global_step}: Reward: {reward_score}")
+            wandb.log({"avg reward scores": reward_score, "step": state.global_step})
+            wandb.log({"reward scores std": reward_score_std, "step": state.global_step})
+            print(f"Step {state.global_step}: Reward Score: {reward_score} Std: {reward_score_std}")
 
 if __name__=='__main__':
     BASE_MODEL = "mistralai/Mistral-Small-Instruct-2409"
@@ -98,9 +109,18 @@ if __name__=='__main__':
     wandb.init(project=MODEL_NAME)
     
     # Load dataset
-    train_dataset = load_dataset('ChaiML/EZ_Qi6_edit_storytelling_empty', split='train')
+    train_dataset = load_dataset('ChaiML/EZ_Qi6_edit_storytelling_60convos', split='train')
     train_dataset = train_dataset.select_columns(['text'])
     print('Length of dataset:', len(train_dataset))
+
+    # load eval dataset for reward model
+    eval_dataset = load_dataset('ChaiML/reward_formatted_blend_mokul_2024-11-14_100_convos', split='train')
+    eval_dataset = eval_dataset.select_columns(['payload'])
+
+
+    print(f'payload for {chosen_i}th dataset')
+    print(eval_dataset[chosen_i]['payload'])
+    
     
     # Load tokenizer and base model
     tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
@@ -170,7 +190,7 @@ if __name__=='__main__':
         reward_model=reward_model,
         tokenizer=tokenizer,
         reward_tokenizer=reward_tokenizer,
-        dataset=train_dataset,
+        dataset=eval_dataset,
         eval_steps=10,  # Evaluate every 10 steps
     )
     

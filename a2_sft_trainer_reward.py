@@ -5,8 +5,9 @@ import random
 import torch
 import wandb
 import warnings
+import logging
 
-from datasets import load_dataset
+from datasets import *
 from peft import LoraConfig, get_peft_model
 from tqdm import tqdm
 from transformers import (
@@ -27,74 +28,84 @@ global layer
 layer = random.choice(range(55))
 
 global choisen_i
-chosen_i = random.choice(range(100))
-
-
-def evaluate_with_reward_model(model, tokenizer, reward_model, reward_tokenizer, eval_dataset): 
-    for name, param in model.named_parameters():
-        if ('norm' in name) or name=='lm_head.weight' or str(layer) in name:
-            if param.requires_grad:
-                # print(f"{name}: Mean={param.data.mean().item()}, Std={param.data.std().item()}")
-                with open('./lora_model_weights.txt','a') as f:
-                    f.write(f"{name}: Mean={param.data.mean().item()}, Std={param.data.std().item()}\n")
-
-    model.eval()
-    
-    reward_scores = []
-    for i in range(len(eval_dataset)):
-        prompt = eval_dataset[i]['payload']
-        text_generator = pipeline("text-generation", model=model.half(), tokenizer=tokenizer)
-        generated_text = text_generator(
-            prompt + '####\n',
-            max_new_tokens=200,
-            num_return_sequences=1,
-            eos_token_id=tokenizer.eos_token_id
-        )
-        generated_text = generated_text[0]['generated_text'].split('\n####\n')[1]
-        generated_text = generated_text.split('\n')[0]
-
-        if i == chosen_i:
-            print('reward response:', generated_text)
-        
-        reward_input = f"{prompt}\n####\n{generated_text}"
-        inputs = reward_tokenizer(reward_input, return_tensors="pt", padding=True, truncation=True).to("cuda")
-    
-        with torch.no_grad():
-            outputs = reward_model(**inputs)
-            reward_score = outputs.logits[:, 1].item()
-
-        reward_scores.append(reward_score)
-    return reward_scores
+chosen_i = random.choice(range(10))
         
 
 # Define the custom callback
 class RewardLoggingCallback(TrainerCallback):
-    def __init__(self, reward_model, tokenizer, reward_tokenizer, dataset, eval_steps=10):
+    def __init__(self, reward_model, alignment_model, tokenizer, reward_tokenizer, alignment_tokenizer, dataset, eval_steps=10):
         self.reward_model = reward_model
+        self.alignment_model = alignment_model
         self.tokenizer = tokenizer
         self.reward_tokenizer = reward_tokenizer
+        self.alignment_tokenizer = alignment_tokenizer
         self.dataset = dataset
         self.eval_steps = eval_steps
-
+        
     def on_step_end(self, args, state: TrainerState, control: TrainerControl, **kwargs):
         if state.global_step % self.eval_steps == 0 and state.global_step > 0:
             with open('./lora_model_weights.txt','a') as f:
                 f.write(f'step {state.global_step}\n')
 
             # Evaluate the model with the reward model
-            reward_scores = evaluate_with_reward_model(
-                kwargs['model'], self.tokenizer, self.reward_model, self.reward_tokenizer, self.dataset,
-            )
+            reward_scores, alignment_scores = self.evaluate_with_reward_model(kwargs['model'])
+
             reward_score = np.mean(reward_scores)
             reward_score_std = np.std(reward_scores)
+
+            alignment_score = np.mean(alignment_scores)
+            alignment_score_std = np.std(alignment_scores)
+            
             # Log the average reward to W&B
             wandb.log({"avg reward scores": reward_score, "step": state.global_step})
             wandb.log({"reward scores std": reward_score_std, "step": state.global_step})
-            print(f"Step {state.global_step}: Reward Score: {reward_score} Std: {reward_score_std}")
+
+            wandb.log({"avg alignment scores": alignment_score, "step": state.global_step})
+            wandb.log({"alignment scores std": alignment_score_std, "step": state.global_step})
+            print(f"Step {state.global_step}: Reward Score: {reward_score} Std: {reward_score_std}; Alignment Score: {alignment_score} Std: {alignment_score_std}")
+    
+    def evaluate_with_reward_model(self, model): 
+        model.eval()
+        
+        reward_scores = []
+        alignment_scores = []
+        generated_texts = []
+        for i in range(len(self.dataset)):
+            prompt = self.dataset[i]['payload']
+            text_generator = pipeline("text-generation", model=model.half(), tokenizer=self.tokenizer)
+            generated_text = text_generator(
+                prompt + '####\n',
+                max_new_tokens=200,
+                num_return_sequences=1,
+                eos_token_id=tokenizer.eos_token_id
+            )
+            generated_text = generated_text[0]['generated_text'].split('\n####\n')[1]
+            generated_text = generated_text.split('\n')[0]
+    
+            reward_input = f"{prompt}\n####\n{generated_text}"
+            reward_inputs = self.reward_tokenizer(reward_input, return_tensors="pt", padding=True, truncation=True).to("cuda")
+            alignment_inputs = self.reward_tokenizer(reward_input, return_tensors="pt", padding=True, truncation=True).to("cuda")
+            alignment_inputs = self.alignment_tokenizer(reward_input, return_tensors="pt", padding=True, truncation=True).to("cuda")
+        
+            with torch.no_grad():
+                reward_outputs = reward_model(**reward_inputs)
+                alignment_outputs = alignment_model(**alignment_inputs)
+                reward_score = reward_outputs.logits[:, 1].item()
+                alignment_score = alignment_outputs.logits[:, 1].item()
+    
+            reward_scores.append(reward_score)
+            alignment_scores.append(alignment_score)
+
+        print('model response:', generated_texts[chosen_i])
+        
+        return reward_scores, alignment_scores
+
 
 if __name__=='__main__':
+    logging.getLogger("transformers").setLevel(logging.ERROR)
+    
     BASE_MODEL = "mistralai/Mistral-Small-Instruct-2409"
-    MODEL_NAME = "EZStorytellingEditsSFT_Qi6_nomem"
+    MODEL_NAME = "EZStorytellingEditsSFT_Qi6"
 
     warnings.filterwarnings(
         "ignore",
@@ -117,6 +128,9 @@ if __name__=='__main__':
     eval_dataset = load_dataset('ChaiML/reward_formatted_blend_mokul_2024-11-14_100_convos', split='train')
     eval_dataset = eval_dataset.select_columns(['payload'])
 
+    eval_df = eval_dataset.to_pandas()
+    eval_df = eval_df.sample(n=10).reset_index(drop=True)
+    eval_dataset = Dataset.from_pandas(eval_df)
 
     print(f'payload for {chosen_i}th reward dataset')
     print(eval_dataset[chosen_i]['payload'])
@@ -178,18 +192,25 @@ if __name__=='__main__':
         report_to=['wandb'],
     )
     
-    # Initialize the reward model (replace with your actual reward model)
+    # Initialize the reward model
     reward_model_repo = "ChaiML/gpt2xl-classification-rm-edit-unfrozen-73acc"
     reward_model = AutoModelForSequenceClassification.from_pretrained(reward_model_repo).to("cuda")
     reward_tokenizer = AutoTokenizer.from_pretrained(reward_model_repo)
+
+    # Initialize the alignment reward model
+    alignment_model_repo = 'ChaiML/CHAI_alignment_reward_model'
+    alignment_model = AutoModelForSequenceClassification.from_pretrained(reward_model_repo).to("cuda")
+    alignment_tokenizer = AutoTokenizer.from_pretrained(alignment_model_repo)
     
-    print("Reward model and tokenizer loaded successfully!")
+    print("Reward models and tokenizers loaded successfully!")
     
     # Initialize the custom callback
     reward_logging_callback = RewardLoggingCallback(
         reward_model=reward_model,
+        alignment_model=alignment_model,
         tokenizer=tokenizer,
         reward_tokenizer=reward_tokenizer,
+        alignment_tokenizer=alignment_tokenizer,
         dataset=eval_dataset,
         eval_steps=10,  # Evaluate every 10 steps
     )

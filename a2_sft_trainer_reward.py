@@ -1,4 +1,5 @@
 import os
+import sys
 import re
 import numpy as np
 import random
@@ -24,16 +25,19 @@ from trl import SFTTrainer, DataCollatorForCompletionOnlyLM
 from chaiverse.submit import ModelSubmitter
 from chaiverse.formatters import PygmalionFormatter
 
+global reward_samples
+reward_samples = 50
+
 global layer
 layer = random.choice(range(55))
 
 global choisen_i
-chosen_i = random.choice(range(10))
+chosen_i = random.choice(range(50))
         
 
 # Define the custom callback
 class RewardLoggingCallback(TrainerCallback):
-    def __init__(self, reward_model, alignment_model, tokenizer, reward_tokenizer, alignment_tokenizer, dataset, eval_steps=10):
+    def __init__(self, reward_model, alignment_model, tokenizer, reward_tokenizer, alignment_tokenizer, dataset, eval_steps=100):
         self.reward_model = reward_model
         self.alignment_model = alignment_model
         self.tokenizer = tokenizer
@@ -81,6 +85,7 @@ class RewardLoggingCallback(TrainerCallback):
             )
             generated_text = generated_text[0]['generated_text'].split('\n####\n')[1]
             generated_text = generated_text.split('\n')[0]
+            generated_texts.append(generated_text)
     
             reward_input = f"{prompt}\n####\n{generated_text}"
             reward_inputs = self.reward_tokenizer(reward_input, return_tensors="pt", padding=True, truncation=True).to("cuda")
@@ -102,16 +107,8 @@ class RewardLoggingCallback(TrainerCallback):
 
 
 if __name__=='__main__':
-    logging.getLogger("transformers").setLevel(logging.ERROR)
-    
     BASE_MODEL = "mistralai/Mistral-Small-Instruct-2409"
-    MODEL_NAME = "EZStorytellingEditsSFT_Qi6"
-
-    warnings.filterwarnings(
-        "ignore",
-        message="The model 'PeftModelForCausalLM' is not supported for text-generation.",
-        category=UserWarning,
-    )
+    MODEL_NAME = "EZStorytellingEditsSFT_9users_1k"
 
     with open('./lora_model_weights.txt','w') as f:
         f.write(f'layer: {layer}\n')
@@ -120,16 +117,20 @@ if __name__=='__main__':
     wandb.init(project=MODEL_NAME)
     
     # Load dataset
-    train_dataset = load_dataset('ChaiML/EZ_Qi6_edit_storytelling_60convos', split='train')
+    train_dataset = load_dataset('ChaiML/EZ_9users_edit_storytelling_5k_1000sample', split='train')
     train_dataset = train_dataset.select_columns(['text'])
     print('Length of dataset:', len(train_dataset))
+    print('steps per epoch:', int(len(train_dataset)/16))
+
+    # evaluate reward and alignment scores every half an epoch
+    reward_eval_steps = int( (len(train_dataset)/16) / 2)
 
     # load eval dataset for reward model
     eval_dataset = load_dataset('ChaiML/reward_formatted_blend_mokul_2024-11-14_100_convos', split='train')
     eval_dataset = eval_dataset.select_columns(['payload'])
 
     eval_df = eval_dataset.to_pandas()
-    eval_df = eval_df.sample(n=10).reset_index(drop=True)
+    eval_df = eval_df.sample(n=reward_samples).reset_index(drop=True)
     eval_dataset = Dataset.from_pandas(eval_df)
 
     print(f'payload for {chosen_i}th reward dataset')
@@ -212,7 +213,7 @@ if __name__=='__main__':
         reward_tokenizer=reward_tokenizer,
         alignment_tokenizer=alignment_tokenizer,
         dataset=eval_dataset,
-        eval_steps=10,  # Evaluate every 10 steps
+        eval_steps=reward_eval_steps,  # Evaluate every 10 steps
     )
     
     # Initialize the trainer with the custom callback
@@ -269,7 +270,7 @@ if __name__=='__main__':
     submission_parameters = {
         "model_repo": f"ChaiML/{MODEL_NAME}",
         "generation_params": generation_params,
-        "formatter": formatter,
+        # "formatter": formatter,
     }
     
     # Submit the model

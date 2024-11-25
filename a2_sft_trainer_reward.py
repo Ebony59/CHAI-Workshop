@@ -47,7 +47,7 @@ class RewardLoggingCallback(TrainerCallback):
         self.eval_steps = eval_steps
         
     def on_step_end(self, args, state: TrainerState, control: TrainerControl, **kwargs):
-        if state.global_step % self.eval_steps == 0 and state.global_step > 0:
+        if state.global_step % self.eval_steps == 0:
             with open('./lora_model_weights.txt','a') as f:
                 f.write(f'step {state.global_step}\n')
 
@@ -108,16 +108,17 @@ class RewardLoggingCallback(TrainerCallback):
 
 if __name__=='__main__':
     BASE_MODEL = "mistralai/Mistral-Small-Instruct-2409"
-    MODEL_NAME = "EZStorytellingEditsSFT_9users_1k"
+    PROJECT_NAME = "EZStorytellingEditsSFT_9users"
+    MODEL_NAME = "EZStorytellingEditsSFT_9users_edi_lexi"
 
     with open('./lora_model_weights.txt','w') as f:
         f.write(f'layer: {layer}\n')
 
     # Initialize W&B
-    wandb.init(project=MODEL_NAME)
+    wandb.init(project=PROJECT_NAME, name='edi_lexi_4epoch')
     
     # Load dataset
-    train_dataset = load_dataset('ChaiML/EZ_9users_edit_storytelling_5k_1000sample', split='train')
+    train_dataset = load_dataset('ChaiML/EZ_9users_edit_storytelling_lexi_fk_3k', split='train')
     train_dataset = train_dataset.select_columns(['text'])
     print('Length of dataset:', len(train_dataset))
     print('steps per epoch:', int(len(train_dataset)/16))
@@ -126,16 +127,11 @@ if __name__=='__main__':
     reward_eval_steps = int( (len(train_dataset)/16) / 2)
 
     # load eval dataset for reward model
-    eval_dataset = load_dataset('ChaiML/reward_formatted_blend_mokul_2024-11-14_100_convos', split='train')
+    eval_dataset = load_dataset('ChaiML/reward_formatted_blend_mokul_2024-11-14_50_convos', split='train')
     eval_dataset = eval_dataset.select_columns(['payload'])
-
-    eval_df = eval_dataset.to_pandas()
-    eval_df = eval_df.sample(n=reward_samples).reset_index(drop=True)
-    eval_dataset = Dataset.from_pandas(eval_df)
 
     print(f'payload for {chosen_i}th reward dataset')
     print(eval_dataset[chosen_i]['payload'])
-    
     
     # Load tokenizer and base model
     tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)

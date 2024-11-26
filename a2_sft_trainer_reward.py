@@ -196,7 +196,7 @@ if __name__=='__main__':
 
     # Initialize the alignment reward model
     alignment_model_repo = 'ChaiML/CHAI_alignment_reward_model'
-    alignment_model = AutoModelForSequenceClassification.from_pretrained(reward_model_repo).to("cuda")
+    alignment_model = AutoModelForSequenceClassification.from_pretrained(alignment_model_repo).to("cuda")
     alignment_tokenizer = AutoTokenizer.from_pretrained(alignment_model_repo)
     
     print("Reward models and tokenizers loaded successfully!")

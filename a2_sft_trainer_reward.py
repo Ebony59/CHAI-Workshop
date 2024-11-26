@@ -87,7 +87,7 @@ class RewardLoggingCallback(TrainerCallback):
             generated_text = generated_text.split('\n')[0]
             generated_texts.append(generated_text)
     
-            reward_input = f"{prompt}\n####\n{generated_text}"
+            reward_input = f"{prompt} {generated_text}"
             reward_inputs = self.reward_tokenizer(reward_input, return_tensors="pt", padding=True, truncation=True).to("cuda")
             alignment_inputs = self.reward_tokenizer(reward_input, return_tensors="pt", padding=True, truncation=True).to("cuda")
             alignment_inputs = self.alignment_tokenizer(reward_input, return_tensors="pt", padding=True, truncation=True).to("cuda")
@@ -95,8 +95,14 @@ class RewardLoggingCallback(TrainerCallback):
             with torch.no_grad():
                 reward_outputs = reward_model(**reward_inputs)
                 alignment_outputs = alignment_model(**alignment_inputs)
-                reward_score = reward_outputs.logits[:, 1].item()
-                alignment_score = alignment_outputs.logits[:, 1].item()
+                if reward_outputs.logits.shape == torch.Size([1, 1]):
+                    reward_score = reward_outputs.logits.item()
+                else:
+                    reward_score = reward_outputs.logits[:, 1].item()
+                if alignment_outputs.logits.shape == torch.Size([1, 1]):
+                    alignment_score = alignment_outputs.logits.item()
+                else:
+                    alignment_score = alignment_outputs.logits[:, 1].item()
     
             reward_scores.append(reward_score)
             alignment_scores.append(alignment_score)

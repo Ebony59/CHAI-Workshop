@@ -134,10 +134,10 @@ if __name__=='__main__':
 
     # load eval dataset for reward model
     eval_dataset = load_dataset('ChaiML/reward_formatted_blend_mokul_2024-11-14_50_convos', split='train')
-    eval_dataset = eval_dataset.select_columns(['payload'])
 
     print(f'payload for {chosen_i}th reward dataset')
     print(eval_dataset[chosen_i]['payload'])
+    
     
     # Load tokenizer and base model
     tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
@@ -196,13 +196,13 @@ if __name__=='__main__':
     )
     
     # Initialize the reward model
-    reward_model_repo = "ChaiML/gpt2xl-classification-rm-edit-unfrozen-73acc"
+    reward_model_repo = "ChaiML/gpt2_xl_pairwise_89m_step_347634"
     reward_model = AutoModelForSequenceClassification.from_pretrained(reward_model_repo).to("cuda")
     reward_tokenizer = AutoTokenizer.from_pretrained(reward_model_repo)
 
     # Initialize the alignment reward model
     alignment_model_repo = 'ChaiML/CHAI_alignment_reward_model'
-    alignment_model = AutoModelForSequenceClassification.from_pretrained(alignment_model_repo).to("cuda")
+    alignment_model = AutoModelForSequenceClassification.from_pretrained(reward_model_repo).to("cuda")
     alignment_tokenizer = AutoTokenizer.from_pretrained(alignment_model_repo)
     
     print("Reward models and tokenizers loaded successfully!")

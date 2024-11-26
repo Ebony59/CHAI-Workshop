@@ -114,17 +114,14 @@ class RewardLoggingCallback(TrainerCallback):
 
 if __name__=='__main__':
     BASE_MODEL = "mistralai/Mistral-Small-Instruct-2409"
-    PROJECT_NAME = "EZStorytellingEditsSFT_9users"
-    MODEL_NAME = "EZStorytellingEditsSFT_9users_edi_lexi"
-
-    with open('./lora_model_weights.txt','w') as f:
-        f.write(f'layer: {layer}\n')
+    PROJECT_NAME = "EZStorytellingEditsSFT_Qi6"
+    MODEL_NAME = "EZStorytellingEditsSFT_Qi6_65convos_reward"
 
     # Initialize W&B
-    wandb.init(project=PROJECT_NAME, name='edi_lexi_4epoch')
+    wandb.init(project=PROJECT_NAME, name='65convos_reward_4epoch')
     
     # Load dataset
-    train_dataset = load_dataset('ChaiML/EZ_9users_edit_storytelling_lexi_fk_3k', split='train')
+    train_dataset = load_dataset('ChaiML/EZ_Qi6_edit_storytelling_65convos_reward', split='train')
     train_dataset = train_dataset.select_columns(['text'])
     print('Length of dataset:', len(train_dataset))
     print('steps per epoch:', int(len(train_dataset)/16))
@@ -199,6 +196,8 @@ if __name__=='__main__':
     reward_model_repo = "ChaiML/gpt2_xl_pairwise_89m_step_347634"
     reward_model = AutoModelForSequenceClassification.from_pretrained(reward_model_repo).to("cuda")
     reward_tokenizer = AutoTokenizer.from_pretrained(reward_model_repo)
+    if not reward_tokenizer.pad_token:
+        reward_tokenizer.pad_token = reward_tokenizer.eos_token
 
     # Initialize the alignment reward model
     alignment_model_repo = 'ChaiML/CHAI_alignment_reward_model'
